@@ -1,5 +1,6 @@
 const { getClientProject, getProjectJobs, jobExists } = require('../utils/projectManager');
 const { getBodyOrQuery } = require('../utils/requestHelpers');
+const { sendForbidden, sendBadRequest, sendNotFound } = require('../utils/responseHelpers');
 
 /**
  * Middleware to validate client's project access
@@ -21,27 +22,21 @@ function validateProjectAccess(req, res, next) {
 
   // Validate project is assigned
   if (!assignedProject) {
-    return res.status(403).json({
-      status: 'error',
-      message: 'No project assigned to this client',
+    return sendForbidden(res, 'No project assigned to this client', {
       hint: 'Contact administrator to assign this client to a project'
     });
   }
 
   // Validate project parameter is provided
   if (!requestedProject) {
-    return res.status(400).json({
-      status: 'error',
-      message: 'No project specified',
+    return sendBadRequest(res, 'No project specified', {
       hint: 'Include "project" parameter in request body or query string'
     });
   }
 
   // Validate client is authorized for requested project
   if (requestedProject !== assignedProject) {
-    return res.status(403).json({
-      status: 'error',
-      message: `Not authorized for project: ${requestedProject}`,
+    return sendForbidden(res, `Not authorized for project: ${requestedProject}`, {
       assignedProject: assignedProject
     });
   }
@@ -67,18 +62,14 @@ function validateJobAccess(req, res, next) {
 
   // Validate job name is provided
   if (!jobName) {
-    return res.status(400).json({
-      status: 'error',
-      message: 'No job specified',
+    return sendBadRequest(res, 'No job specified', {
       hint: 'Include "job" parameter in request body or query string'
     });
   }
 
   // Validate job exists
   if (!jobExists(project, jobName)) {
-    return res.status(404).json({
-      status: 'error',
-      message: `Job not found: ${jobName}`,
+    return sendNotFound(res, `Job not found: ${jobName}`, {
       project: project,
       availableJobs: getProjectJobs(project)
     });

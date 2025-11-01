@@ -7,6 +7,14 @@ const { authenticateWebhook, reloadAuthorizedKeys } = require('./middleware/auth
 const { validateProjectAccess, validateJobAccess } = require('./middleware/projectAuth');
 const { loadKey } = require('./utils/keyManager');
 const {
+  sendSuccess,
+  sendAccepted,
+  sendError,
+  sendNotFound,
+  sendForbidden,
+  sendInternalError
+} = require('./utils/responseHelpers');
+const {
   getClientProject,
   getProjectJobs,
   executeJob,
@@ -64,7 +72,7 @@ app.use((req, res, next) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  sendSuccess(res);
 });
 
 // Public key endpoint - allows clients to fetch server's public key
@@ -74,25 +82,15 @@ app.get('/public-key', (req, res) => {
       path.join(__dirname, 'keys', 'server_public.pem');
 
     if (!fs.existsSync(publicKeyPath)) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Server public key not found. Generate keys first.'
-      });
+      return sendNotFound(res, 'Server public key not found. Generate keys first.');
     }
 
     const publicKey = loadKey(publicKeyPath);
 
-    res.json({
-      status: 'ok',
-      publicKey: publicKey,
-      timestamp: new Date().toISOString()
-    });
+    sendSuccess(res, { publicKey });
   } catch (error) {
     logger.error('Error fetching public key', { error: error.message });
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to retrieve public key'
-    });
+    sendInternalError(res, 'Failed to retrieve public key');
   }
 });
 
@@ -100,17 +98,10 @@ app.get('/public-key', (req, res) => {
 app.post('/admin/reload-keys', authenticateWebhook, (req, res) => {
   try {
     reloadAuthorizedKeys();
-    res.json({
-      status: 'ok',
-      message: 'Authorized keys reloaded successfully',
-      timestamp: new Date().toISOString()
-    });
+    sendSuccess(res, { message: 'Authorized keys reloaded successfully' });
   } catch (error) {
     logger.error('Error reloading keys', { error: error.message });
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to reload keys'
-    });
+    sendInternalError(res, 'Failed to reload keys');
   }
 });
 
@@ -121,26 +112,15 @@ app.get('/jobs', authenticateWebhook, (req, res) => {
     const project = getClientProject(clientKey);
 
     if (!project) {
-      return res.status(403).json({
-        status: 'error',
-        message: 'No project assigned to this client'
-      });
+      return sendForbidden(res, 'No project assigned to this client');
     }
 
     const jobs = getProjectJobs(project);
 
-    res.json({
-      status: 'ok',
-      project,
-      jobs,
-      timestamp: new Date().toISOString()
-    });
+    sendSuccess(res, { project, jobs });
   } catch (error) {
     logger.error('Error listing jobs', { error: error.message });
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to list jobs'
-    });
+    sendInternalError(res, 'Failed to list jobs');
   }
 });
 
@@ -166,12 +146,9 @@ app.post('/webhook',
       logger.info('Starting job execution', { project, job: jobName });
 
       // Send immediate response to client
-      res.json({
-        status: 'accepted',
-        message: 'Job started',
+      sendAccepted(res, 'Job started', {
         project,
-        job: jobName,
-        timestamp: new Date().toISOString()
+        job: jobName
       });
 
       // Execute job asynchronously
@@ -213,10 +190,7 @@ app.use((err, req, res, next) => {
     path: req.path
   });
 
-  res.status(500).json({
-    status: 'error',
-    message: 'Internal server error'
-  });
+  sendInternalError(res, 'Internal server error');
 });
 
 // Start server

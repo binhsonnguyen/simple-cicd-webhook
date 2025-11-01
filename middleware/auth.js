@@ -1,5 +1,6 @@
 const { loadAuthorizedKeys, verifyToken } = require('../utils/keyManager');
 const { getToken } = require('../utils/requestHelpers');
+const { sendUnauthorized, sendForbidden } = require('../utils/responseHelpers');
 const path = require('path');
 
 // Load authorized keys at startup
@@ -36,19 +37,14 @@ function authenticateWebhook(req, res, next) {
   const token = getToken(req);
 
   if (!token) {
-    return res.status(401).json({
-      status: 'error',
-      message: 'Unauthorized: No token provided',
+    return sendUnauthorized(res, 'Unauthorized: No token provided', {
       hint: 'Include token in query param, body, or X-Webhook-Token header'
     });
   }
 
   // Verify token against authorized keys
   if (!verifyToken(token, authorizedKeys)) {
-    return res.status(403).json({
-      status: 'error',
-      message: 'Forbidden: Invalid or unauthorized token'
-    });
+    return sendForbidden(res, 'Forbidden: Invalid or unauthorized token');
   }
 
   // Token is valid, attach client key to request for later use
