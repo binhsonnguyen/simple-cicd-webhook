@@ -12,7 +12,11 @@ logs/
 keys/
 *.pem
 *.key
-config/
+
+# Config files (contain sensitive data)
+config/authorized_keys.txt
+config/client_projects.json
+
 # OS files
 .DS_Store
 Thumbs.db

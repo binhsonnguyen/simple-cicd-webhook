@@ -1,0 +1,26 @@
+{
+  "$schema": {
+    "description": "Client to Project mapping configuration",
+    "format": {
+      "clientPublicKey": {
+        "description": "Client description",
+        "project": "project-name"
+      }
+    },
+    "notes": [
+      "Each client keypair is bound to ONE project",
+      "Jobs are stored in jobs/<project-name>/<job-name>.sh",
+      "Client can only execute jobs within their assigned project"
+    ]
+  },
+  "clients": {
+    "_example_project_a_key_": {
+      "description": "Project A CI/CD Pipeline",
+      "project": "project-a"
+    },
+    "_example_project_b_key_": {
+      "description": "Project B CI/CD Pipeline",
+      "project": "project-b"
+    }
+  }
+}

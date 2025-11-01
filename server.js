@@ -4,12 +4,11 @@ const winston = require('winston');
 const path = require('path');
 const fs = require('fs');
 const { authenticateWebhook, reloadAuthorizedKeys } = require('./middleware/auth');
+const { validateProjectAccess, validateJobAccess } = require('./middleware/projectAuth');
 const { loadKey } = require('./utils/keyManager');
 const {
   getClientProject,
-  getAvailableProjects,
   getProjectJobs,
-  jobExists,
   executeJob,
   loadClientProjects
 } = require('./utils/projectManager');
@@ -145,116 +144,66 @@ app.get('/jobs', authenticateWebhook, (req, res) => {
   }
 });
 
-// Webhook endpoint - protected with authentication
-app.post('/webhook', authenticateWebhook, async (req, res) => {
-  const clientKey = req.clientKey;
-  const requestedProject = req.body.project || req.query.project;
-  const jobName = req.body.job || req.query.job;
+// Webhook endpoint - protected with authentication and project validation
+app.post('/webhook',
+  authenticateWebhook,      // Step 1: Authenticate client
+  validateProjectAccess,    // Step 2: Validate project access
+  validateJobAccess,        // Step 3: Validate job exists
+  async (req, res) => {
+    // All validation done by middleware
+    const clientKey = req.clientKey;  // from authenticateWebhook
+    const project = req.project;      // from validateProjectAccess
+    const jobName = req.jobName;      // from validateJobAccess
 
-  // Get client's assigned project
-  const assignedProject = getClientProject(clientKey);
-
-  logger.info('Webhook received and authenticated', {
-    clientKey: clientKey.substring(0, 50) + '...',
-    assignedProject,
-    requestedProject,
-    jobName,
-    body: req.body
-  });
-
-  // Validate project is assigned
-  if (!assignedProject) {
-    return res.status(403).json({
-      status: 'error',
-      message: 'No project assigned to this client'
-    });
-  }
-
-  // Validate project parameter is provided
-  if (!requestedProject) {
-    return res.status(400).json({
-      status: 'error',
-      message: 'No project specified',
-      hint: 'Include "project" parameter in request body or query string'
-    });
-  }
-
-  // Validate job name is provided
-  if (!jobName) {
-    return res.status(400).json({
-      status: 'error',
-      message: 'No job specified',
-      hint: 'Include "job" parameter in request body or query string'
-    });
-  }
-
-  // Validate client is authorized for requested project
-  if (requestedProject !== assignedProject) {
-    logger.warn('Unauthorized project access attempt', {
+    logger.info('Webhook received - executing job', {
       clientKey: clientKey.substring(0, 50) + '...',
-      assignedProject,
-      requestedProject
+      project,
+      jobName
     });
 
-    return res.status(403).json({
-      status: 'error',
-      message: `Not authorized for project: ${requestedProject}`,
-      assignedProject: assignedProject
-    });
+    // Execute the job
+    try {
+      logger.info('Starting job execution', { project, job: jobName });
+
+      // Send immediate response to client
+      res.json({
+        status: 'accepted',
+        message: 'Job started',
+        project,
+        job: jobName,
+        timestamp: new Date().toISOString()
+      });
+
+      // Execute job asynchronously
+      const result = await executeJob(project, jobName, {
+        env: {
+          WEBHOOK_CLIENT: clientKey.substring(0, 50),
+          WEBHOOK_TIMESTAMP: new Date().toISOString(),
+          ...(req.body.env || {})
+        },
+        onOutput: (stream, data) => {
+          logger.info(`Job output [${project}/${jobName}]`, { stream, data: data.trim() });
+        }
+      });
+
+      logger.info('Job completed successfully', {
+        project,
+        job: jobName,
+        exitCode: result.exitCode,
+        duration: result.duration
+      });
+
+    } catch (error) {
+      logger.error('Job execution failed', {
+        project,
+        job: jobName,
+        error: error.message,
+        exitCode: error.exitCode,
+        stderr: error.stderr
+      });
+    }
   }
-
-  // Validate job exists
-  if (!jobExists(assignedProject, jobName)) {
-    return res.status(404).json({
-      status: 'error',
-      message: `Job not found: ${jobName}`,
-      project: assignedProject,
-      availableJobs: getProjectJobs(assignedProject)
-    });
-  }
-
-  // Execute the job
-  try {
-    logger.info('Starting job execution', { project: assignedProject, job: jobName });
-
-    // Send immediate response to client
-    res.json({
-      status: 'accepted',
-      message: 'Job started',
-      project: assignedProject,
-      job: jobName,
-      timestamp: new Date().toISOString()
-    });
-
-    // Execute job asynchronously
-    const result = await executeJob(assignedProject, jobName, {
-      env: {
-        WEBHOOK_CLIENT: clientKey.substring(0, 50),
-        WEBHOOK_TIMESTAMP: new Date().toISOString(),
-        ...(req.body.env || {})
-      },
-      onOutput: (stream, data) => {
-        logger.info(`Job output [${assignedProject}/${jobName}]`, { stream, data: data.trim() });
-      }
-    });
-
-    logger.info('Job completed successfully', {
-      project: assignedProject,
-      job: jobName,
-      exitCode: result.exitCode,
-      duration: result.duration
-    });
-
-  } catch (error) {
-    logger.error('Job execution failed', {
-      project: assignedProject,
-      job: jobName,
-      error: error.message,
-      exitCode: error.exitCode,
-      stderr: error.stderr
-    });
-  }
-});
+);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
