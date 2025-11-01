@@ -119,21 +119,19 @@ echo "Deployment completed successfully!"
 
     // Step 2: Generate client keypair
     console.log('\nGenerating client keypair...');
-    const keyPair = generateKeyPair();
+    const { publicKey, privateKey } = generateKeyPair();
 
     // Ensure keys directory exists
     if (!fs.existsSync(KEYS_DIR)) {
       fs.mkdirSync(KEYS_DIR, { recursive: true });
     }
 
-    const keyPath = path.join(KEYS_DIR, clientKeyName);
-    saveKeyPair(keyPair, keyPath);
+    saveKeyPair(publicKey, privateKey, KEYS_DIR, clientKeyName);
     console.log(`✓ Generated keypair: keys/${clientKeyName}_public.pem`);
     console.log(`                     keys/${clientKeyName}_private.pem`);
 
     // Step 3: Add public key to authorized_keys.txt
-    const publicKeyPath = `${keyPath}_public.pem`;
-    const publicKey = fs.readFileSync(publicKeyPath, 'utf8').trim();
+    const publicKeyContent = publicKey.trim();
 
     // Ensure authorized_keys.txt exists
     if (!fs.existsSync(AUTHORIZED_KEYS_FILE)) {
@@ -143,12 +141,12 @@ echo "Deployment completed successfully!"
 
     // Add to authorized keys with comment
     const comment = `# ${projectName} - ${description || clientKeyName}`;
-    const entry = `\n${comment}\n${publicKey}\n`;
+    const entry = `\n${comment}\n${publicKeyContent}\n`;
     fs.appendFileSync(AUTHORIZED_KEYS_FILE, entry);
     console.log(`✓ Added public key to authorized_keys.txt`);
 
     // Step 4: Assign client to project
-    assignClientToProject(publicKey, projectName, description || `${projectName} client`);
+    assignClientToProject(publicKeyContent, projectName, description || `${projectName} client`);
     console.log(`✓ Assigned client to project: ${projectName}`);
 
     // Success summary
