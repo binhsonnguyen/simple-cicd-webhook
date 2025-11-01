@@ -5,6 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:bg": "nohup node server.js > logs/server.log 2>&1 & echo $! > .server.pid && echo 'Server started in background. PID saved to .server.pid'",
+    "stop": "if [ -f .server.pid ]; then kill $(cat .server.pid) && rm .server.pid && echo 'Server stopped'; else echo 'No server PID file found'; fi",
+    "logs": "tail -f logs/server.log",
     "dev": "node server.js",
     "test": "jest",
     "test:watch": "jest --watch",
