@@ -1,8 +1,16 @@
-# Quick Setup Example
+# Complete Setup Example
 
-This guide walks through a complete setup example.
+This guide demonstrates setting up two projects with separate CI/CD pipelines.
 
-## Step 1: Install and Generate Keys
+## Overview
+
+We'll create:
+- **project-a**: A web application
+- **project-b**: An API service
+
+Each project has its own client keypair and can only execute its own jobs.
+
+## Step 1: Install and Generate Server Keys
 
 ```bash
 # Install dependencies
@@ -11,97 +19,190 @@ npm install
 # Generate server keys
 node scripts/generateKeys.js server
 # Output: keys/server_public.pem and keys/server_private.pem created
-
-# Generate client key for GitLab CI
-node scripts/generateKeys.js gitlab-ci
-# Output: keys/gitlab-ci_public.pem and keys/gitlab-ci_private.pem created
 ```
 
-## Step 2: Authorize the Client
+## Step 2: Create Projects
 
 ```bash
-# Add client public key to authorized keys
-node scripts/addAuthorizedKey.js ./keys/gitlab-ci_public.pem "GitLab CI Runner"
-# Output: Key successfully added to config/authorized_keys.txt
+# Create project directories
+mkdir -p jobs/project-a jobs/project-b
+
+# Create jobs for Project A
+cat > jobs/project-a/deploy.sh << 'EOF'
+#!/bin/bash
+# Job: deploy
+# Description: Deploy Project A web application
+
+echo "=== Deploying Project A ==="
+echo "Environment: ${DEPLOY_ENV:-production}"
+echo "Building..."
+# npm run build
+echo "Deploying..."
+# rsync -avz dist/ server:/var/www/project-a/
+echo "✓ Project A deployed successfully"
+exit 0
+EOF
+
+cat > jobs/project-a/test.sh << 'EOF'
+#!/bin/bash
+# Job: test
+# Description: Run Project A test suite
+
+echo "=== Running Project A Tests ==="
+# npm test
+echo "✓ Tests passed"
+exit 0
+EOF
+
+# Create jobs for Project B
+cat > jobs/project-b/deploy.sh << 'EOF'
+#!/bin/bash
+# Job: deploy
+# Description: Deploy Project B API service
+
+echo "=== Deploying Project B API ==="
+echo "Environment: ${DEPLOY_ENV:-production}"
+echo "Building Docker image..."
+# docker build -t project-b-api:latest .
+echo "Deploying to Kubernetes..."
+# kubectl apply -f k8s/
+echo "✓ Project B API deployed successfully"
+exit 0
+EOF
+
+# Make scripts executable
+chmod +x jobs/project-a/*.sh jobs/project-b/*.sh
 ```
 
-## Step 3: Configure Job Permissions
+## Step 3: Generate Client Keys
 
 ```bash
-# List available jobs
-node scripts/manageJobPermissions.js list-jobs
-# Output: Shows all jobs in jobs/ directory
+# Generate keypair for Project A CI
+node scripts/generateKeys.js project-a-ci
+# Output: keys/project-a-ci_public.pem and keys/project-a-ci_private.pem
 
-# Grant GitLab CI permission to run specific jobs
-node scripts/manageJobPermissions.js add \
-  ./keys/gitlab-ci_public.pem \
-  "deploy-staging,run-tests" \
-  "GitLab CI Runner"
-# Output: Permissions updated successfully
-
-# Verify permissions
-node scripts/manageJobPermissions.js list-clients
+# Generate keypair for Project B CI
+node scripts/generateKeys.js project-b-ci
+# Output: keys/project-b-ci_public.pem and keys/project-b-ci_private.pem
 ```
 
-## Step 4: Start the Server
+## Step 4: Authorize Clients
 
 ```bash
-# Start server
+# Add Project A client to authorized keys
+node scripts/addAuthorizedKey.js ./keys/project-a-ci_public.pem "Project A CI Pipeline"
+# Output: ✓ Key successfully added
+
+# Add Project B client to authorized keys
+node scripts/addAuthorizedKey.js ./keys/project-b-ci_public.pem "Project B CI Pipeline"
+# Output: ✓ Key successfully added
+```
+
+## Step 5: Assign Clients to Projects
+
+```bash
+# Assign Project A client to project-a
+node scripts/manageClientProjects.js assign \
+  ./keys/project-a-ci_public.pem \
+  "project-a" \
+  "Project A Web Application CI"
+# Output: ✓ Client assigned to project successfully
+#   Project: project-a
+#   Available jobs: deploy, test
+
+# Assign Project B client to project-b
+node scripts/manageClientProjects.js assign \
+  ./keys/project-b-ci_public.pem \
+  "project-b" \
+  "Project B API Service CI"
+# Output: ✓ Client assigned to project successfully
+#   Project: project-b
+#   Available jobs: deploy
+
+# Verify assignments
+node scripts/manageClientProjects.js list-clients
+```
+
+## Step 6: Start the Server
+
+```bash
 npm start
-# Output: Server running on port 3000
+# Output: Webhook server started on port 3000
 ```
 
-## Step 5: Test the Setup
+## Step 7: Test the Setup
 
 In another terminal:
 
 ```bash
-# Save the client public key to a variable
-CLIENT_KEY=$(cat keys/gitlab-ci_public.pem)
+# Test Project A
+PROJECT_A_KEY=$(cat keys/project-a-ci_public.pem)
 
-# Test authentication
+# List Project A jobs
+curl http://localhost:3000/jobs \
+  -H "X-Webhook-Token: $PROJECT_A_KEY"
+
+# Expected response:
+# {
+#   "status": "ok",
+#   "project": "project-a",
+#   "jobs": ["deploy", "test"]
+# }
+
+# Run Project A deployment
 curl -X POST http://localhost:3000/webhook \
   -H "Content-Type: application/json" \
-  -H "X-Webhook-Token: $CLIENT_KEY" \
-  -d '{"job": "run-tests"}'
+  -H "X-Webhook-Token: $PROJECT_A_KEY" \
+  -d '{"project": "project-a", "job": "deploy"}'
 
 # Expected response:
 # {
 #   "status": "accepted",
 #   "message": "Job started",
-#   "jobName": "run-tests",
+#   "project": "project-a",
+#   "job": "deploy",
 #   "timestamp": "..."
 # }
 
-# Check what jobs you can run
-curl http://localhost:3000/jobs \
-  -H "X-Webhook-Token: $CLIENT_KEY"
+# Test Project B
+PROJECT_B_KEY=$(cat keys/project-b-ci_public.pem)
+
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Token: $PROJECT_B_KEY" \
+  -d '{"project": "project-b", "job": "deploy"}'
+```
+
+## Step 8: Test Security
+
+```bash
+# Try to access wrong project (should fail)
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Token: $PROJECT_A_KEY" \
+  -d '{"project": "project-b", "job": "deploy"}'
 
 # Expected response:
 # {
-#   "status": "ok",
-#   "availableJobs": ["deploy-staging", "deploy-production", "run-tests", "rebuild-cache"],
-#   "allowedJobs": ["deploy-staging", "run-tests"]
+#   "status": "error",
+#   "message": "Not authorized for project: project-b",
+#   "assignedProject": "project-a"
 # }
 ```
 
-## Step 6: Configure GitLab CI
+## Step 9: Configure GitLab CI
 
-In your GitLab project:
+### For Project A Repository
 
-1. Go to **Settings** > **CI/CD** > **Variables**
-
-2. Add these variables:
-   - `WEBHOOK_URL` = `https://your-server.com` (your webhook server URL)
-   - `WEBHOOK_TOKEN` = (paste content of `keys/gitlab-ci_public.pem`)
-     - Mark as **Protected** and **Masked**
-
-3. Update your `.gitlab-ci.yml`:
+In `project-a/.gitlab-ci.yml`:
 
 ```yaml
 stages:
   - test
   - deploy
+
+variables:
+  PROJECT_NAME: "project-a"
 
 run-tests:
   stage: test
@@ -110,55 +211,134 @@ run-tests:
       curl -X POST "${WEBHOOK_URL}/webhook" \
         -H "Content-Type: application/json" \
         -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
-        -d '{"job": "run-tests"}'
+        -d "{\"project\": \"${PROJECT_NAME}\", \"job\": \"test\"}"
 
-deploy-staging:
+deploy-production:
   stage: deploy
   script:
     - |
       curl -X POST "${WEBHOOK_URL}/webhook" \
         -H "Content-Type: application/json" \
         -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
-        -d '{"job": "deploy-staging"}'
+        -d "{\"project\": \"${PROJECT_NAME}\", \"job\": \"deploy\"}"
   only:
-    - develop
+    - main
+  environment:
+    name: production
 ```
 
-## Step 7: Monitor Logs
+**GitLab CI/CD Variables for Project A:**
+1. Go to **Settings** > **CI/CD** > **Variables**
+2. Add variables:
+   - `WEBHOOK_URL` = `https://your-webhook-server.com`
+   - `WEBHOOK_TOKEN` = (paste content of `keys/project-a-ci_public.pem`)
+     - Mark as **Protected** and **Masked**
+
+### For Project B Repository
+
+In `project-b/.gitlab-ci.yml`:
+
+```yaml
+stages:
+  - deploy
+
+variables:
+  PROJECT_NAME: "project-b"
+
+deploy-api:
+  stage: deploy
+  script:
+    - |
+      curl -X POST "${WEBHOOK_URL}/webhook" \
+        -H "Content-Type: application/json" \
+        -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
+        -d "{\"project\": \"${PROJECT_NAME}\", \"job\": \"deploy\"}"
+  only:
+    - main
+  when: manual
+```
+
+**GitLab CI/CD Variables for Project B:**
+- `WEBHOOK_URL` = `https://your-webhook-server.com` (same server)
+- `WEBHOOK_TOKEN` = (paste content of `keys/project-b-ci_public.pem`)
+  - Mark as **Protected** and **Masked**
+
+## Step 10: Monitor Logs
 
 ```bash
-# Watch the logs
+# Watch all logs
 tail -f logs/combined.log
 
-# Or check server console output for real-time job execution
+# Or watch server console for real-time output
 ```
 
-## Creating Additional Clients
+## Architecture Summary
 
-For each new client (e.g., different GitLab projects):
+```
+┌─────────────────┐
+│  Project A Repo │
+│   (GitLab CI)   │
+└────────┬────────┘
+         │ project-a-ci public key
+         │
+         v
+┌────────────────────────┐       ┌──────────────┐
+│   Webhook Server       │───────│ project-a/   │
+│ ┌────────────────────┐ │       │ ├─ deploy.sh │
+│ │ Authentication     │ │       │ └─ test.sh   │
+│ │ Project Validation │ │       └──────────────┘
+│ │ Job Execution      │ │
+│ └────────────────────┘ │       ┌──────────────┐
+└────────┬───────────────┘       │ project-b/   │
+         │                       │ └─ deploy.sh │
+         │ project-b-ci public key    └──────────────┘
+         v
+┌─────────────────┐
+│  Project B Repo │
+│   (GitLab CI)   │
+└─────────────────┘
+```
+
+## Security Benefits
+
+✅ **Project Isolation**: Project A cannot execute Project B jobs
+✅ **Key-based Auth**: Each project has unique credentials
+✅ **Audit Trail**: All job executions logged with project/client info
+✅ **Access Control**: Server enforces project assignments
+✅ **Fail-Safe**: Invalid requests rejected before job execution
+
+## Adding More Projects
 
 ```bash
-# 1. Generate new client keys
-node scripts/generateKeys.js client-project-2
+# 1. Create project directory and jobs
+mkdir -p jobs/project-c
+echo '#!/bin/bash\necho "Running job..."' > jobs/project-c/build.sh
+chmod +x jobs/project-c/build.sh
 
-# 2. Authorize the client
-node scripts/addAuthorizedKey.js ./keys/client-project-2_public.pem "Project 2 CI"
+# 2. Generate client keypair
+node scripts/generateKeys.js project-c-ci
 
-# 3. Set job permissions
-node scripts/manageJobPermissions.js add \
-  ./keys/client-project-2_public.pem \
-  "deploy-production" \
-  "Project 2 - Production Only"
+# 3. Authorize client
+node scripts/addAuthorizedKey.js ./keys/project-c-ci_public.pem "Project C CI"
 
-# 4. Use client-project-2_public.pem as WEBHOOK_TOKEN in that project's GitLab CI
+# 4. Assign to project
+node scripts/manageClientProjects.js assign \
+  ./keys/project-c-ci_public.pem \
+  "project-c" \
+  "Project C CI Pipeline"
+
+# 5. Use project-c-ci_public.pem in Project C's GitLab CI variables
 ```
 
-## Security Checklist
+## Cleanup
 
-- [ ] Server private key is secured with 600 permissions
-- [ ] `.env` file is not committed to git
-- [ ] Client public keys are properly authorized in `config/authorized_keys.txt`
-- [ ] Job permissions are configured in `config/job_permissions.json`
-- [ ] GitLab CI variables are marked as protected and masked
-- [ ] Server is running behind HTTPS in production
-- [ ] Only necessary jobs are granted to each client
+```bash
+# Remove client assignment
+node scripts/manageClientProjects.js remove ./keys/project-a-ci_public.pem
+
+# Remove authorized key (manual edit)
+# Edit config/authorized_keys.txt and remove the key
+
+# Delete project jobs
+rm -rf jobs/project-a
+```

@@ -10,7 +10,7 @@
     "generate-keys": "node scripts/generateKeys.js",
     "add-key": "node scripts/addAuthorizedKey.js",
     "test-webhook": "node scripts/testWebhook.js",
-    "manage-jobs": "node scripts/manageJobPermissions.js"
+    "manage-projects": "node scripts/manageClientProjects.js"
   },
   "keywords": [],
   "author": "",

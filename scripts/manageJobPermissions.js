@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { setClientPermissions, getAllowedJobs, getAvailableJobs } = require('../utils/jobManager');
+const { setClientPermissions, getAllowedJobs, getAvailableJobs, getAvailableJobsGrouped } = require('../utils/jobManager');
 
 /**
  * CLI tool to manage job permissions for clients
@@ -101,6 +101,7 @@ function removePermissions(keyFile) {
 
 function listJobs() {
   const availableJobs = getAvailableJobs();
+  const groupedJobs = getAvailableJobsGrouped();
 
   console.log('\nAvailable Jobs:');
   console.log('===============\n');
@@ -110,18 +111,33 @@ function listJobs() {
     return;
   }
 
-  availableJobs.forEach((job, index) => {
-    const jobPath = path.join(__dirname, '../jobs', `${job}.sh`);
-    const content = fs.readFileSync(jobPath, 'utf8');
+  // Display grouped view
+  console.log('Grouped by directory:\n');
+  Object.keys(groupedJobs).sort().forEach(group => {
+    const displayGroup = group === '_root' ? '(root)' : group;
+    console.log(`${displayGroup}/`);
 
-    // Extract description from comment
-    const descMatch = content.match(/# Description: (.+)/);
-    const description = descMatch ? descMatch[1] : 'No description';
+    groupedJobs[group].forEach(jobName => {
+      const fullJobPath = group === '_root' ? jobName : `${group}/${jobName}`;
+      const jobFilePath = path.join(__dirname, '../jobs', `${fullJobPath}.sh`);
 
-    console.log(`${index + 1}. ${job}`);
-    console.log(`   ${description}`);
+      try {
+        const content = fs.readFileSync(jobFilePath, 'utf8');
+        const descMatch = content.match(/# Description: (.+)/);
+        const description = descMatch ? descMatch[1] : 'No description';
+
+        console.log(`  ├─ ${jobName}`);
+        console.log(`  │  ${description}`);
+        console.log(`  │  Use: "${fullJobPath}"`);
+        console.log('  │');
+      } catch (error) {
+        console.log(`  ├─ ${jobName} (error reading file)`);
+      }
+    });
     console.log('');
   });
+
+  console.log(`Total: ${availableJobs.length} jobs\n`);
 }
 
 // Main CLI
@@ -137,13 +153,15 @@ if (!command) {
   console.log('  list-jobs                 List all available jobs');
   console.log('  add <key_file> <jobs> <description>');
   console.log('                            Add or update client permissions');
-  console.log('                            jobs: comma-separated list (e.g., "deploy-staging,run-tests")');
+  console.log('                            jobs: comma-separated list');
+  console.log('                            Supports grouped jobs: "group/job-name"');
   console.log('  remove <key_file>         Remove client permissions');
   console.log('');
   console.log('Examples:');
   console.log('  node scripts/manageJobPermissions.js list-jobs');
   console.log('  node scripts/manageJobPermissions.js list-clients');
-  console.log('  node scripts/manageJobPermissions.js add ./keys/client1_public.pem "deploy-staging,run-tests" "GitLab CI Staging"');
+  console.log('  node scripts/manageJobPermissions.js add ./keys/client1_public.pem "project-a/deploy,project-a/test" "Project A CI"');
+  console.log('  node scripts/manageJobPermissions.js add ./keys/client2_public.pem "shared/deploy-staging,shared/run-tests" "Shared Jobs"');
   console.log('  node scripts/manageJobPermissions.js remove ./keys/client1_public.pem');
   process.exit(0);
 }

@@ -33,8 +33,40 @@ function loadJobPermissions() {
 loadJobPermissions();
 
 /**
- * Get list of all available jobs
- * @returns {Array} Array of job names
+ * Recursively scan for job files in subdirectories
+ * @param {string} dir - Directory to scan
+ * @param {string} prefix - Path prefix for grouped jobs
+ * @returns {Array} Array of job paths
+ */
+function scanJobsRecursive(dir, prefix = '') {
+  const jobs = [];
+
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        // Recursively scan subdirectories
+        const subJobs = scanJobsRecursive(fullPath, prefix ? `${prefix}/${entry.name}` : entry.name);
+        jobs.push(...subJobs);
+      } else if (entry.isFile() && entry.name.endsWith('.sh')) {
+        // Add job with group prefix
+        const jobName = entry.name.replace('.sh', '');
+        jobs.push(prefix ? `${prefix}/${jobName}` : jobName);
+      }
+    }
+  } catch (error) {
+    console.error(`Error scanning directory ${dir}:`, error.message);
+  }
+
+  return jobs;
+}
+
+/**
+ * Get list of all available jobs (supports grouped jobs)
+ * @returns {Array} Array of job names in format "group/job" or "job"
  */
 function getAvailableJobs() {
   try {
@@ -42,14 +74,41 @@ function getAvailableJobs() {
       return [];
     }
 
-    const files = fs.readdirSync(JOBS_DIR);
-    return files
-      .filter(file => file.endsWith('.sh'))
-      .map(file => file.replace('.sh', ''));
+    return scanJobsRecursive(JOBS_DIR);
   } catch (error) {
     console.error('Error listing jobs:', error.message);
     return [];
   }
+}
+
+/**
+ * Get available jobs grouped by directory
+ * @returns {Object} Jobs grouped by their directory
+ */
+function getAvailableJobsGrouped() {
+  const allJobs = getAvailableJobs();
+  const grouped = {};
+
+  allJobs.forEach(job => {
+    const parts = job.split('/');
+    if (parts.length > 1) {
+      const group = parts.slice(0, -1).join('/');
+      const jobName = parts[parts.length - 1];
+
+      if (!grouped[group]) {
+        grouped[group] = [];
+      }
+      grouped[group].push(jobName);
+    } else {
+      // Jobs without a group go into 'root'
+      if (!grouped['_root']) {
+        grouped['_root'] = [];
+      }
+      grouped['_root'].push(job);
+    }
+  });
+
+  return grouped;
 }
 
 /**
@@ -88,22 +147,44 @@ function isJobAllowed(clientKey, jobName) {
 }
 
 /**
- * Validate job exists in jobs directory
- * @param {string} jobName - Job name to validate
+ * Validate job exists in jobs directory (supports grouped jobs)
+ * @param {string} jobName - Job name to validate (can be "group/job" format)
  * @returns {boolean} True if job exists
  */
 function jobExists(jobName) {
-  if (!jobName || jobName.includes('..') || jobName.includes('/')) {
-    return false; // Prevent directory traversal
+  if (!jobName) {
+    return false;
+  }
+
+  // Security check: prevent directory traversal
+  if (jobName.includes('..') || jobName.startsWith('/') || jobName.includes('\\')) {
+    return false;
+  }
+
+  // Allow forward slashes for grouped jobs, but validate each part
+  const parts = jobName.split('/');
+  for (const part of parts) {
+    if (!part || part === '.' || part === '..') {
+      return false;
+    }
   }
 
   const jobPath = path.join(JOBS_DIR, `${jobName}.sh`);
+
+  // Additional security check: ensure resolved path is within JOBS_DIR
+  const resolvedPath = path.resolve(jobPath);
+  const resolvedJobsDir = path.resolve(JOBS_DIR);
+
+  if (!resolvedPath.startsWith(resolvedJobsDir)) {
+    return false; // Path escapes jobs directory
+  }
+
   return fs.existsSync(jobPath);
 }
 
 /**
- * Execute a job script
- * @param {string} jobName - Job name to execute
+ * Execute a job script (supports grouped jobs)
+ * @param {string} jobName - Job name to execute (can be "group/job" format)
  * @param {Object} options - Execution options
  * @param {Object} options.env - Environment variables to pass to the job
  * @param {Function} options.onOutput - Callback for stdout/stderr output
@@ -117,6 +198,7 @@ function executeJob(jobName, options = {}) {
     }
 
     const jobPath = path.join(JOBS_DIR, `${jobName}.sh`);
+    const jobDir = path.dirname(jobPath);
     const startTime = Date.now();
 
     // Prepare environment variables
@@ -124,13 +206,14 @@ function executeJob(jobName, options = {}) {
       ...process.env,
       ...(options.env || {}),
       JOB_NAME: jobName,
+      JOB_GROUP: jobName.includes('/') ? jobName.split('/').slice(0, -1).join('/') : '',
       JOB_START_TIME: new Date().toISOString()
     };
 
-    // Spawn the job process
+    // Spawn the job process in the job's directory
     const jobProcess = spawn('/bin/bash', [jobPath], {
       env,
-      cwd: JOBS_DIR
+      cwd: jobDir
     });
 
     let stdout = '';
@@ -221,6 +304,7 @@ function setClientPermissions(clientKey, allowedJobs, description = '') {
 module.exports = {
   loadJobPermissions,
   getAvailableJobs,
+  getAvailableJobsGrouped,
   getAllowedJobs,
   isJobAllowed,
   jobExists,

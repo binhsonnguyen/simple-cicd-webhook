@@ -1,6 +1,18 @@
 # GitLab CI/CD Webhook Server
 
-A Node.js webhook server to receive triggers from GitLab CI runners and execute CI/CD jobs with public/private key authentication.
+A Node.js webhook server for GitLab CI runners with project-based authentication and job execution.
+
+## Architecture
+
+**Core Concept**: Each client keypair is bound to ONE project. Clients authenticate with their key and can only execute jobs within their assigned project.
+
+```
+Client Keypair → Project → Jobs
+```
+
+- **Client**: GitLab CI runner with a unique public/private keypair
+- **Project**: A collection of CI/CD jobs (e.g., "project-a", "project-b")
+- **Jobs**: Shell scripts that perform CI/CD tasks
 
 ## Setup
 
@@ -15,228 +27,211 @@ node scripts/generateKeys.js server
 ```
 
 This creates:
-- `keys/server_public.pem` - Server's public key (can be shared)
+- `keys/server_public.pem` - Server's public key
 - `keys/server_private.pem` - Server's private key (keep secure!)
 
-### 3. Generate client keys
+### 3. Create a project
 ```bash
-node scripts/generateKeys.js client1
+mkdir -p jobs/my-project
 ```
 
-This creates client key pair in `keys/` directory.
-
-### 4. Authorize client keys
-Add client public keys to authorized list:
+### 4. Create jobs for the project
 ```bash
-node scripts/addAuthorizedKey.js ./keys/client1_public.pem "GitLab CI Runner"
+cat > jobs/my-project/deploy.sh << 'EOF'
+#!/bin/bash
+# Job: deploy
+# Description: Deploy my-project application
+
+echo "Deploying my-project..."
+echo "Environment: ${DEPLOY_ENV:-production}"
+# Add your deployment commands here
+exit 0
+EOF
+
+chmod +x jobs/my-project/deploy.sh
 ```
 
-Or add the key directly:
+### 5. Generate client keys
 ```bash
-node scripts/addAuthorizedKey.js "-----BEGIN PUBLIC KEY-----..." "My Client"
+node scripts/generateKeys.js my-project-client
 ```
 
-### 5. Configure environment
-- Copy `.env.example` to `.env`
-- Update paths if needed (defaults should work)
+This creates client keypair in `keys/` directory.
 
-### 6. Configure job permissions
-Assign jobs to clients:
+### 6. Authorize the client
 ```bash
-# List available jobs
-node scripts/manageJobPermissions.js list-jobs
-
-# Grant client permission to run specific jobs
-node scripts/manageJobPermissions.js add ./keys/client1_public.pem "deploy-staging,run-tests" "GitLab CI Staging"
+node scripts/addAuthorizedKey.js ./keys/my-project-client_public.pem "My Project CI"
 ```
 
-### 7. Start the server
+### 7. Assign client to project
+```bash
+node scripts/manageClientProjects.js assign \
+  ./keys/my-project-client_public.pem \
+  "my-project" \
+  "My Project CI/CD Pipeline"
+```
+
+### 8. Start the server
 ```bash
 npm start
 ```
 
-## Authentication
+## Project Structure
 
-The webhook uses public key authentication:
-
-1. **Server** has a public/private key pair
-2. **Clients** have their public keys registered in `config/authorized_keys.txt`
-3. **Requests** must include the client's public key as a token
-
-### Sending authenticated requests
-
-Include the token in one of these ways:
-
-**Query parameter:**
-```bash
-curl -X POST "http://localhost:3000/webhook?token=YOUR_PUBLIC_KEY"
+```
+jobs/
+├── project-a/
+│   ├── deploy.sh
+│   ├── test.sh
+│   └── rollback.sh
+└── project-b/
+    ├── deploy.sh
+    └── build.sh
 ```
 
-**Request body:**
-```bash
-curl -X POST http://localhost:3000/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"token": "YOUR_PUBLIC_KEY", "data": "..."}'
-```
+Each project directory contains its own jobs. No sharing between projects.
 
-**Header:**
-```bash
-curl -X POST http://localhost:3000/webhook \
-  -H "X-Webhook-Token: YOUR_PUBLIC_KEY"
-```
+## Usage
 
-## Jobs
+### Client Request Format
 
-Jobs are shell scripts stored in the `jobs/` directory. Each client can only execute jobs they're authorized for.
+Clients must include **three parameters**:
 
-### Creating Jobs
+1. **token** - Client's public key (for authentication)
+2. **project** - Project name (must match assigned project)
+3. **job** - Job name to execute
 
-Create a new job by adding a `.sh` file to the `jobs/` directory:
-
-```bash
-#!/bin/bash
-# Job: my-job
-# Description: Description of what this job does
-
-echo "Running my job..."
-# Your CI/CD commands here
-exit 0
-```
-
-Make it executable:
-```bash
-chmod +x jobs/my-job.sh
-```
-
-### Managing Job Permissions
-
-Use the job permissions management tool:
-
-```bash
-# List all available jobs
-node scripts/manageJobPermissions.js list-jobs
-
-# List configured clients and their permissions
-node scripts/manageJobPermissions.js list-clients
-
-# Grant permissions to a client
-node scripts/manageJobPermissions.js add ./keys/client_public.pem "job1,job2" "Client Description"
-
-# Remove client permissions
-node scripts/manageJobPermissions.js remove ./keys/client_public.pem
-```
-
-### Built-in Jobs
-
-The server includes these sample jobs:
-
-- **deploy-staging** - Deploy application to staging environment
-- **deploy-production** - Deploy application to production environment
-- **run-tests** - Run automated test suite
-- **rebuild-cache** - Clear and rebuild application cache
-
-### Running Jobs via Webhook
-
-Specify the job name in your webhook request:
-
-**Via query parameter:**
-```bash
-curl -X POST "http://localhost:3000/webhook?job=deploy-staging" \
-  -H "X-Webhook-Token: YOUR_PUBLIC_KEY"
-```
-
-**Via request body:**
+Example request:
 ```bash
 curl -X POST http://localhost:3000/webhook \
   -H "Content-Type: application/json" \
-  -H "X-Webhook-Token: YOUR_PUBLIC_KEY" \
-  -d '{"job": "deploy-staging"}'
+  -H "X-Webhook-Token: $(cat keys/my-project-client_public.pem)" \
+  -d '{
+    "project": "my-project",
+    "job": "deploy"
+  }'
 ```
 
-### Listing Available Jobs
+Response:
+```json
+{
+  "status": "accepted",
+  "message": "Job started",
+  "project": "my-project",
+  "job": "deploy",
+  "timestamp": "2025-11-01T..."
+}
+```
 
-Check which jobs you can run:
+### List Available Jobs
+
+Check what jobs are available for your project:
 ```bash
 curl http://localhost:3000/jobs \
-  -H "X-Webhook-Token: YOUR_PUBLIC_KEY"
+  -H "X-Webhook-Token: $(cat keys/my-project-client_public.pem)"
 ```
 
 Response:
 ```json
 {
   "status": "ok",
-  "availableJobs": ["deploy-staging", "deploy-production", "run-tests", "rebuild-cache"],
-  "allowedJobs": ["deploy-staging", "run-tests"]
+  "project": "my-project",
+  "jobs": ["deploy", "test", "rollback"],
+  "timestamp": "2025-11-01T..."
 }
 ```
 
-## Endpoints
+## Management Commands
 
-- `GET /health` - Health check endpoint (no auth required)
-- `GET /public-key` - Fetch server's public key (no auth required)
-- `GET /jobs` - List available and allowed jobs (requires authentication)
-- `POST /webhook` - Execute a CI/CD job (requires authentication)
-- `POST /admin/reload-keys` - Reload authorized keys without restart (requires authentication)
+### List all projects and their jobs
+```bash
+node scripts/manageClientProjects.js list-projects
+```
+
+### List all configured clients
+```bash
+node scripts/manageClientProjects.js list-clients
+```
+
+### Assign client to project
+```bash
+node scripts/manageClientProjects.js assign \
+  <key_file> <project_name> <description>
+```
+
+### Remove client assignment
+```bash
+node scripts/manageClientProjects.js remove <key_file>
+```
 
 ## GitLab CI Integration
 
-In your `.gitlab-ci.yml`, trigger specific jobs via webhook:
+In your `.gitlab-ci.yml`:
 
 ```yaml
-deploy-staging:
-  stage: deploy
-  script:
-    - |
-      curl -X POST "${WEBHOOK_URL}/webhook" \
-        -H "Content-Type: application/json" \
-        -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
-        -d '{"job": "deploy-staging"}'
-  only:
-    - develop
+stages:
+  - test
+  - deploy
 
-deploy-production:
-  stage: deploy
-  script:
-    - |
-      curl -X POST "${WEBHOOK_URL}/webhook" \
-        -H "Content-Type: application/json" \
-        -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
-        -d '{"job": "deploy-production"}'
-  only:
-    - main
-  when: manual
-
-run-tests:
+test:
   stage: test
   script:
     - |
       curl -X POST "${WEBHOOK_URL}/webhook" \
         -H "Content-Type: application/json" \
         -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
-        -d '{"job": "run-tests"}'
+        -d '{"project": "my-project", "job": "test"}'
+
+deploy:
+  stage: deploy
+  script:
+    - |
+      curl -X POST "${WEBHOOK_URL}/webhook" \
+        -H "Content-Type: application/json" \
+        -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
+        -d '{"project": "my-project", "job": "deploy"}'
+  only:
+    - main
 ```
 
-**GitLab CI/CD Variables to set:**
+**GitLab CI/CD Variables:**
 - `WEBHOOK_URL` - Your webhook server URL (e.g., `https://your-server.com`)
-- `WEBHOOK_TOKEN` - Your client's public key (mark as protected and masked)
+- `WEBHOOK_TOKEN` - Client's public key (mark as protected and masked)
 
-## Logging
+## API Endpoints
 
-All requests are logged to:
-- Console output (with colors)
-- `logs/combined.log` - All logs
-- `logs/error.log` - Error logs only
+- `GET /health` - Health check (no auth)
+- `GET /public-key` - Fetch server public key (no auth)
+- `GET /jobs` - List jobs for client's project (requires auth)
+- `POST /webhook` - Execute job (requires auth + project + job params)
+- `POST /admin/reload-keys` - Reload authorized keys (requires auth)
 
-## Security Notes
+## Security Model
 
-- **Never commit private keys** to version control
-- Store private keys securely on the server
-- Use environment variables for sensitive configuration
-- The `keys/` directory is gitignored by default
-- Private keys are created with restricted permissions (600)
-- **Job permissions** are enforced - clients can only run jobs they're authorized for
-- Job scripts are validated to prevent directory traversal attacks
-- All job execution is logged with client identification
+### Authentication Flow
+
+1. **Client sends request** with token (public key) + project + job
+2. **Server validates token** against `config/authorized_keys.txt`
+3. **Server checks project assignment** in `config/client_projects.json`
+4. **Server validates requested project** matches assigned project
+5. **Server validates job exists** in `jobs/<project>/<job>.sh`
+6. **Server executes job** if all checks pass
+
+### Security Features
+
+- ✅ Public/private key authentication
+- ✅ Project-based access control
+- ✅ Path traversal prevention
+- ✅ Job validation before execution
+- ✅ Comprehensive request logging
+- ✅ Private keys with restricted permissions (600)
+
+### What's Protected
+
+- **Cross-project access**: Client for project-a cannot run jobs in project-b
+- **Unauthorized jobs**: Only jobs in assigned project can be executed
+- **Directory traversal**: Cannot escape project directory
+- **Unauthenticated access**: All job execution requires valid keypair
 
 ## Environment Variables
 
@@ -244,4 +239,72 @@ All requests are logged to:
 - `NODE_ENV` - Environment mode (development/production)
 - `SERVER_PUBLIC_KEY_PATH` - Path to server's public key
 - `SERVER_PRIVATE_KEY_PATH` - Path to server's private key
-- `AUTHORIZED_KEYS_PATH` - Path to authorized client keys file
+- `AUTHORIZED_KEYS_PATH` - Path to authorized client keys
+
+## Logging
+
+All requests and job executions are logged to:
+- Console output (with colors)
+- `logs/combined.log` - All logs
+- `logs/error.log` - Error logs only
+
+Job execution logs include:
+- Client key (partial)
+- Project name
+- Job name
+- Execution status
+- Duration
+- Output (stdout/stderr)
+
+## Example: Multi-Project Setup
+
+```bash
+# Create two projects
+mkdir -p jobs/frontend jobs/backend
+
+# Create jobs
+echo '#!/bin/bash
+echo "Deploying frontend..."' > jobs/frontend/deploy.sh
+chmod +x jobs/frontend/deploy.sh
+
+echo '#!/bin/bash
+echo "Deploying backend..."' > jobs/backend/deploy.sh
+chmod +x jobs/backend/deploy.sh
+
+# Generate client keys
+node scripts/generateKeys.js frontend-ci
+node scripts/generateKeys.js backend-ci
+
+# Authorize clients
+node scripts/addAuthorizedKey.js ./keys/frontend-ci_public.pem "Frontend CI"
+node scripts/addAuthorizedKey.js ./keys/backend-ci_public.pem "Backend CI"
+
+# Assign to projects
+node scripts/manageClientProjects.js assign ./keys/frontend-ci_public.pem "frontend" "Frontend CI"
+node scripts/manageClientProjects.js assign ./keys/backend-ci_public.pem "backend" "Backend CI"
+```
+
+Now:
+- `frontend-ci` can only run jobs in `jobs/frontend/`
+- `backend-ci` can only run jobs in `jobs/backend/`
+- Complete isolation between projects
+
+## Troubleshooting
+
+### Client gets "No project assigned"
+- Run `node scripts/manageClientProjects.js list-clients` to verify assignment
+- Assign client: `node scripts/manageClientProjects.js assign <key> <project> "desc"`
+
+### Client gets "Not authorized for project"
+- Client is trying to access a different project than assigned
+- Check assigned project: `node scripts/manageClientProjects.js list-clients`
+- Update request to use correct project name
+
+### Job not found
+- List available jobs: `node scripts/manageClientProjects.js list-projects`
+- Ensure job script exists: `ls jobs/<project>/<job>.sh`
+- Make sure script is executable: `chmod +x jobs/<project>/<job>.sh`
+
+## Contributing
+
+See `SETUP_EXAMPLE.md` for a complete walkthrough of setting up a new project.
