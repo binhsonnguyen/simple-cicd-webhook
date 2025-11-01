@@ -1,4 +1,5 @@
 const { loadAuthorizedKeys, verifyToken } = require('../utils/keyManager');
+const { getToken } = require('../utils/requestHelpers');
 const path = require('path');
 
 // Load authorized keys at startup
@@ -32,11 +33,7 @@ reloadAuthorizedKeys();
  */
 function authenticateWebhook(req, res, next) {
   // Extract token from multiple possible sources
-  const token =
-    req.query.token ||
-    req.body?.token ||
-    req.headers['x-webhook-token'] ||
-    req.headers['authorization']?.replace('Bearer ', '');
+  const token = getToken(req);
 
   if (!token) {
     return res.status(401).json({
@@ -63,10 +60,7 @@ function authenticateWebhook(req, res, next) {
  * Optional middleware that logs auth attempts but doesn't block
  */
 function logAuthAttempt(req, res, next) {
-  const token =
-    req.query.token ||
-    req.body?.token ||
-    req.headers['x-webhook-token'];
+  const token = getToken(req);
 
   if (token) {
     req.authAttempted = true;

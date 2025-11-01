@@ -1,4 +1,5 @@
 const { getClientProject, getProjectJobs, jobExists } = require('../utils/projectManager');
+const { getBodyOrQuery } = require('../utils/requestHelpers');
 
 /**
  * Middleware to validate client's project access
@@ -13,7 +14,7 @@ const { getClientProject, getProjectJobs, jobExists } = require('../utils/projec
  */
 function validateProjectAccess(req, res, next) {
   const clientKey = req.clientKey;
-  const requestedProject = req.body.project || req.query.project;
+  const requestedProject = getBodyOrQuery(req, 'project');
 
   // Get client's assigned project
   const assignedProject = getClientProject(clientKey);
@@ -62,7 +63,7 @@ function validateProjectAccess(req, res, next) {
  */
 function validateJobAccess(req, res, next) {
   const project = req.project;
-  const jobName = req.body.job || req.query.job;
+  const jobName = getBodyOrQuery(req, 'job');
 
   // Validate job name is provided
   if (!jobName) {
