@@ -1,0 +1,20 @@
+{
+  "name": "dev-cicd-webhooks",
+  "version": "1.0.0",
+  "description": "Webhook server for GitLab CI/CD triggers",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "winston": "^3.18.3"
+  }
+}
