@@ -12,7 +12,7 @@ logs/
 keys/
 *.pem
 *.key
-
+config/authorized_keys.txt
 # OS files
 .DS_Store
 Thumbs.db
