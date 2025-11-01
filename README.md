@@ -14,28 +14,82 @@ Client Keypair → Project → Jobs
 - **Project**: A collection of CI/CD jobs (e.g., "project-a", "project-b")
 - **Jobs**: Shell scripts that perform CI/CD tasks
 
+## Quick Start
+
+The fastest way to get started:
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Generate server keys
+npm run generate-keys server
+
+# 3. Create a new project (interactive)
+npm run create-project
+
+# 4. Start the server
+npm start
+```
+
+That's it! The `create-project` command handles everything: directory creation, keypair generation, authorization, and project assignment.
+
 ## Setup
 
-### 1. Install dependencies
+### Option A: Quick Setup (Recommended)
+
+**1. Install dependencies**
 ```bash
 npm install
 ```
 
-### 2. Generate server keys
+**2. Generate server keys**
 ```bash
-node scripts/generateKeys.js server
+npm run generate-keys server
 ```
 
 This creates:
 - `keys/server_public.pem` - Server's public key
 - `keys/server_private.pem` - Server's private key (keep secure!)
 
-### 3. Create a project
+**3. Create project interactively**
+```bash
+npm run create-project
+```
+
+This interactive script will:
+- ✅ Create project directory in `jobs/`
+- ✅ Generate client keypair
+- ✅ Add client to authorized keys
+- ✅ Assign client to project
+- ✅ Create sample job script
+- ✅ Show webhook usage example
+
+**4. Start the server**
+```bash
+npm start
+```
+
+### Option B: Manual Setup
+
+If you prefer manual control:
+
+**1. Install dependencies**
+```bash
+npm install
+```
+
+**2. Generate server keys**
+```bash
+node scripts/generateKeys.js server
+```
+
+**3. Create a project**
 ```bash
 mkdir -p jobs/my-project
 ```
 
-### 4. Create jobs for the project
+**4. Create jobs for the project**
 ```bash
 cat > jobs/my-project/deploy.sh << 'EOF'
 #!/bin/bash
@@ -51,19 +105,17 @@ EOF
 chmod +x jobs/my-project/deploy.sh
 ```
 
-### 5. Generate client keys
+**5. Generate client keys**
 ```bash
 node scripts/generateKeys.js my-project-client
 ```
 
-This creates client keypair in `keys/` directory.
-
-### 6. Authorize the client
+**6. Authorize the client**
 ```bash
 node scripts/addAuthorizedKey.js ./keys/my-project-client_public.pem "My Project CI"
 ```
 
-### 7. Assign client to project
+**7. Assign client to project**
 ```bash
 node scripts/manageClientProjects.js assign \
   ./keys/my-project-client_public.pem \
@@ -71,7 +123,7 @@ node scripts/manageClientProjects.js assign \
   "My Project CI/CD Pipeline"
 ```
 
-### 8. Start the server
+**8. Start the server**
 ```bash
 npm start
 ```
@@ -143,26 +195,86 @@ Response:
 
 ## Management Commands
 
-### List all projects and their jobs
+### Project Management
+
+**Create a new project (interactive)**
 ```bash
+npm run create-project
+```
+
+Creates a complete project setup with:
+- Project directory and sample job
+- Client keypair generation
+- Authorization and assignment
+- Usage instructions
+
+**Remove a project (interactive)**
+```bash
+npm run remove-project
+```
+
+Safely removes a project:
+- Lists all projects
+- Shows what will be deleted
+- Requires confirmation
+- Optionally removes keys from authorized_keys.txt
+
+### Client Management
+
+**List all projects and their jobs**
+```bash
+npm run manage-projects list-projects
+# or
 node scripts/manageClientProjects.js list-projects
 ```
 
-### List all configured clients
+**List all configured clients**
 ```bash
+npm run manage-projects list-clients
+# or
 node scripts/manageClientProjects.js list-clients
 ```
 
-### Assign client to project
+**Assign client to project (manual)**
 ```bash
 node scripts/manageClientProjects.js assign \
   <key_file> <project_name> <description>
 ```
 
-### Remove client assignment
+**Remove client assignment (manual)**
 ```bash
 node scripts/manageClientProjects.js remove <key_file>
 ```
+
+### Testing
+
+**Test webhook with client key**
+```bash
+npm run test-webhook keys/my-project-client_public.pem
+```
+
+**Run unit tests**
+```bash
+npm test                  # Run all tests
+npm run test:watch       # Watch mode
+npm run test:coverage    # With coverage report
+```
+
+## Available npm Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm start` | Start the webhook server |
+| `npm run dev` | Start in development mode |
+| `npm test` | Run unit tests |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run test:coverage` | Run tests with coverage |
+| `npm run create-project` | **Create new project (interactive)** |
+| `npm run remove-project` | **Remove project (interactive)** |
+| `npm run manage-projects` | Manage client-project assignments |
+| `npm run generate-keys` | Generate RSA keypairs |
+| `npm run add-key` | Add client key to authorized keys |
+| `npm run test-webhook` | Test webhook with a key |
 
 ## GitLab CI Integration
 
@@ -258,6 +370,34 @@ Job execution logs include:
 
 ## Example: Multi-Project Setup
 
+### Quick Method (Recommended)
+
+```bash
+# Create frontend project
+npm run create-project
+# Enter: frontend
+# Description: Frontend deployment
+# Key name: (press Enter for default)
+
+# Create backend project
+npm run create-project
+# Enter: backend
+# Description: Backend deployment
+# Key name: (press Enter for default)
+
+# Start server
+npm start
+```
+
+Now:
+- `frontend-client` can only run jobs in `jobs/frontend/`
+- `backend-client` can only run jobs in `jobs/backend/`
+- Complete isolation between projects
+
+### Manual Method
+
+If you need more control:
+
 ```bash
 # Create two projects
 mkdir -p jobs/frontend jobs/backend
@@ -284,26 +424,75 @@ node scripts/manageClientProjects.js assign ./keys/frontend-ci_public.pem "front
 node scripts/manageClientProjects.js assign ./keys/backend-ci_public.pem "backend" "Backend CI"
 ```
 
-Now:
-- `frontend-ci` can only run jobs in `jobs/frontend/`
-- `backend-ci` can only run jobs in `jobs/backend/`
-- Complete isolation between projects
-
 ## Troubleshooting
 
 ### Client gets "No project assigned"
-- Run `node scripts/manageClientProjects.js list-clients` to verify assignment
-- Assign client: `node scripts/manageClientProjects.js assign <key> <project> "desc"`
+**Cause**: Client key has not been assigned to any project
+
+**Solution**:
+```bash
+# Check current assignments
+npm run manage-projects list-clients
+
+# Option 1: Use interactive project creation
+npm run create-project
+
+# Option 2: Manually assign existing key
+node scripts/manageClientProjects.js assign <key_file> <project> "description"
+```
 
 ### Client gets "Not authorized for project"
-- Client is trying to access a different project than assigned
-- Check assigned project: `node scripts/manageClientProjects.js list-clients`
-- Update request to use correct project name
+**Cause**: Client is trying to access a different project than assigned
+
+**Solution**:
+```bash
+# Check which project the client is assigned to
+npm run manage-projects list-clients
+
+# Update your request to use the correct project name
+# Or reassign the client to the desired project
+```
 
 ### Job not found
-- List available jobs: `node scripts/manageClientProjects.js list-projects`
-- Ensure job script exists: `ls jobs/<project>/<job>.sh`
-- Make sure script is executable: `chmod +x jobs/<project>/<job>.sh`
+**Cause**: Job script doesn't exist or isn't executable
+
+**Solution**:
+```bash
+# List all available jobs
+npm run manage-projects list-projects
+
+# Verify job script exists
+ls jobs/<project>/<job>.sh
+
+# Make script executable
+chmod +x jobs/<project>/<job>.sh
+
+# Or create a new job script in the project directory
+```
+
+### Environment validation failed
+**Cause**: Required directories or configuration files missing
+
+**Solution**:
+```bash
+# Create required directories
+mkdir -p jobs config keys logs
+
+# Generate server keys if missing
+npm run generate-keys server
+
+# Create at least one project
+npm run create-project
+```
+
+### Want to start fresh?
+**Remove a project completely**:
+```bash
+npm run remove-project
+# Select project to remove
+# Confirm deletion
+# Choose whether to remove keys from authorized_keys.txt
+```
 
 ## Contributing
 

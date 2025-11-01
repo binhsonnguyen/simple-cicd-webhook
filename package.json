@@ -12,7 +12,9 @@
     "generate-keys": "node scripts/generateKeys.js",
     "add-key": "node scripts/addAuthorizedKey.js",
     "test-webhook": "node scripts/testWebhook.js",
-    "manage-projects": "node scripts/manageClientProjects.js"
+    "manage-projects": "node scripts/manageClientProjects.js",
+    "create-project": "node scripts/createProject.js",
+    "remove-project": "node scripts/removeProject.js"
   },
   "keywords": [],
   "author": "",

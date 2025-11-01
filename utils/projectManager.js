@@ -10,13 +10,14 @@ let clientProjects = {};
 
 /**
  * Load client-to-project mappings from config file
+ * @returns {Object} Client projects configuration
  */
 function loadClientProjects() {
   try {
     if (!fs.existsSync(CLIENT_PROJECTS_FILE)) {
       console.warn('Client projects file not found:', CLIENT_PROJECTS_FILE);
       clientProjects = { clients: {} };
-      return;
+      return clientProjects;
     }
 
     const content = fs.readFileSync(CLIENT_PROJECTS_FILE, 'utf8');
@@ -24,9 +25,11 @@ function loadClientProjects() {
 
     const clientCount = Object.keys(clientProjects.clients || {}).length;
     console.log(`Loaded project mappings for ${clientCount} clients`);
+    return clientProjects;
   } catch (error) {
     console.error('Error loading client projects:', error.message);
     clientProjects = { clients: {} };
+    return clientProjects;
   }
 }
 
