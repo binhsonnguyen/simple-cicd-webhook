@@ -1,11 +1,13 @@
+const path = require('path');
 const { loadAuthorizedKeys, verifyToken } = require('../utils/keyManager');
 const { getToken } = require('../utils/requestHelpers');
 const { sendUnauthorized, sendForbidden } = require('../utils/responseHelpers');
-const path = require('path');
+const { sanitizeToken } = require('../utils/security');
+const { ERROR_MESSAGES, ERROR_HINTS, PATHS } = require('../constants');
 
 // Load authorized keys at startup
 const AUTHORIZED_KEYS_PATH = process.env.AUTHORIZED_KEYS_PATH ||
-  path.join(__dirname, '../config/authorized_keys.txt');
+  path.join(__dirname, '..', PATHS.AUTHORIZED_KEYS_FILE);
 
 let authorizedKeys = [];
 
@@ -37,14 +39,14 @@ function authenticateWebhook(req, res, next) {
   const token = getToken(req);
 
   if (!token) {
-    return sendUnauthorized(res, 'Unauthorized: No token provided', {
-      hint: 'Include token in query param, body, or X-Webhook-Token header'
+    return sendUnauthorized(res, ERROR_MESSAGES.NO_TOKEN_PROVIDED, {
+      hint: ERROR_HINTS.INCLUDE_TOKEN
     });
   }
 
   // Verify token against authorized keys
   if (!verifyToken(token, authorizedKeys)) {
-    return sendForbidden(res, 'Forbidden: Invalid or unauthorized token');
+    return sendForbidden(res, ERROR_MESSAGES.INVALID_TOKEN);
   }
 
   // Token is valid, attach client key to request for later use
@@ -60,7 +62,7 @@ function logAuthAttempt(req, res, next) {
 
   if (token) {
     req.authAttempted = true;
-    req.tokenProvided = token.substring(0, 20) + '...'; // Log partial token for debugging
+    req.tokenProvided = sanitizeToken(token); // Log partial token for debugging
   }
 
   next();

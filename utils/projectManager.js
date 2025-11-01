@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { PATHS } = require('../constants');
+const { isValidProjectName, isValidJobName, sanitizePath } = require('./validators');
 
-const JOBS_DIR = path.join(__dirname, '../jobs');
-const CLIENT_PROJECTS_FILE = path.join(__dirname, '../config/client_projects.json');
+const JOBS_DIR = path.join(__dirname, '..', PATHS.JOBS_DIR);
+const CLIENT_PROJECTS_FILE = path.join(__dirname, '..', PATHS.CLIENT_PROJECTS_FILE);
 
 let clientProjects = {};
 
@@ -78,14 +79,14 @@ function getAvailableProjects() {
 function getProjectJobs(projectName) {
   if (!projectName) return [];
 
-  // Security: prevent directory traversal
-  if (projectName.includes('..') || projectName.includes('/') || projectName.includes('\\')) {
+  // Security: validate project name
+  if (!isValidProjectName(projectName)) {
     return [];
   }
 
-  const projectDir = path.join(JOBS_DIR, projectName);
+  const projectDir = sanitizePath(JOBS_DIR, projectName);
 
-  if (!fs.existsSync(projectDir)) {
+  if (!projectDir || !fs.existsSync(projectDir)) {
     return [];
   }
 
@@ -111,128 +112,20 @@ function jobExists(projectName, jobName) {
     return false;
   }
 
-  // Security checks
-  if (projectName.includes('..') || projectName.includes('/') || projectName.includes('\\')) {
+  // Security: validate names
+  if (!isValidProjectName(projectName) || !isValidJobName(jobName)) {
     return false;
   }
 
-  if (jobName.includes('..') || jobName.includes('/') || jobName.includes('\\')) {
-    return false;
-  }
+  const jobPath = sanitizePath(JOBS_DIR, projectName, `${jobName}.sh`);
 
-  const jobPath = path.join(JOBS_DIR, projectName, `${jobName}.sh`);
-
-  // Additional security: ensure resolved path is within JOBS_DIR
-  const resolvedPath = path.resolve(jobPath);
-  const resolvedJobsDir = path.resolve(JOBS_DIR);
-
-  if (!resolvedPath.startsWith(resolvedJobsDir)) {
-    return false;
+  if (!jobPath) {
+    return false; // Path traversal detected
   }
 
   return fs.existsSync(jobPath);
 }
 
-/**
- * Execute a job for a project
- * @param {string} projectName - Project name
- * @param {string} jobName - Job name
- * @param {Object} options - Execution options
- * @param {Object} options.env - Environment variables to pass to the job
- * @param {Function} options.onOutput - Callback for stdout/stderr output
- * @param {Function} options.onComplete - Callback when job completes
- * @returns {Promise} Job execution information
- */
-function executeJob(projectName, jobName, options = {}) {
-  return new Promise((resolve, reject) => {
-    if (!jobExists(projectName, jobName)) {
-      return reject(new Error(`Job not found: ${projectName}/${jobName}`));
-    }
-
-    const jobPath = path.join(JOBS_DIR, projectName, `${jobName}.sh`);
-    const jobDir = path.dirname(jobPath);
-    const startTime = Date.now();
-
-    // Prepare environment variables
-    const env = {
-      ...process.env,
-      ...(options.env || {}),
-      PROJECT_NAME: projectName,
-      JOB_NAME: jobName,
-      JOB_START_TIME: new Date().toISOString()
-    };
-
-    // Spawn the job process in the project's directory
-    const jobProcess = spawn('/bin/bash', [jobPath], {
-      env,
-      cwd: jobDir
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    // Capture stdout
-    jobProcess.stdout.on('data', (data) => {
-      const output = data.toString();
-      stdout += output;
-      if (options.onOutput) {
-        options.onOutput('stdout', output);
-      }
-    });
-
-    // Capture stderr
-    jobProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      stderr += output;
-      if (options.onOutput) {
-        options.onOutput('stderr', output);
-      }
-    });
-
-    // Handle process completion
-    jobProcess.on('close', (exitCode) => {
-      const duration = Date.now() - startTime;
-      const result = {
-        projectName,
-        jobName,
-        exitCode,
-        success: exitCode === 0,
-        duration,
-        stdout,
-        stderr,
-        startTime: new Date(startTime).toISOString(),
-        endTime: new Date().toISOString()
-      };
-
-      if (options.onComplete) {
-        options.onComplete(result);
-      }
-
-      if (exitCode === 0) {
-        resolve(result);
-      } else {
-        reject(Object.assign(new Error(`Job failed with exit code ${exitCode}`), result));
-      }
-    });
-
-    // Handle process errors
-    jobProcess.on('error', (error) => {
-      const result = {
-        projectName,
-        jobName,
-        success: false,
-        error: error.message,
-        duration: Date.now() - startTime
-      };
-
-      if (options.onComplete) {
-        options.onComplete(result);
-      }
-
-      reject(Object.assign(error, result));
-    });
-  });
-}
 
 /**
  * Assign a client to a project
@@ -280,7 +173,6 @@ module.exports = {
   getAvailableProjects,
   getProjectJobs,
   jobExists,
-  executeJob,
   assignClientToProject,
   removeClientAssignment
 };

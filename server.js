@@ -9,7 +9,6 @@ const { loadKey } = require('./utils/keyManager');
 const {
   sendSuccess,
   sendAccepted,
-  sendError,
   sendNotFound,
   sendForbidden,
   sendInternalError
@@ -17,13 +16,38 @@ const {
 const {
   getClientProject,
   getProjectJobs,
-  executeJob,
   loadClientProjects
 } = require('./utils/projectManager');
+const { executeJob } = require('./utils/jobExecutor');
+const { sanitizeClientKey } = require('./utils/security');
+const { validateEnvironment } = require('./utils/envValidator');
+const {
+  DEFAULTS,
+  PATHS,
+  LOG_FILES,
+  ERROR_MESSAGES,
+  SUCCESS_MESSAGES
+} = require('./constants');
+
+// Validate environment at startup
+let envConfig;
+try {
+  const validationResult = validateEnvironment();
+  envConfig = validationResult.config;
+
+  // Log warnings if any
+  if (validationResult.warnings.length > 0) {
+    console.warn('Environment validation warnings:');
+    validationResult.warnings.forEach(warning => console.warn(`  - ${warning}`));
+  }
+} catch (error) {
+  console.error('Environment validation failed:', error.message);
+  process.exit(1);
+}
 
 // Configure Winston logger
 const logger = winston.createLogger({
-  level: 'info',
+  level: process.env.LOG_LEVEL || DEFAULTS.LOG_LEVEL,
   format: winston.format.combine(
     winston.format.timestamp({
       format: 'YYYY-MM-DD HH:mm:ss'
@@ -41,19 +65,19 @@ const logger = winston.createLogger({
         winston.format.simple()
       )
     }),
-    // Write all logs to logs/combined.log
+    // Write all logs to logs/
     new winston.transports.File({
-      filename: path.join(__dirname, 'logs', 'error.log'),
+      filename: path.join(__dirname, PATHS.LOGS_DIR, LOG_FILES.ERROR),
       level: 'error'
     }),
     new winston.transports.File({
-      filename: path.join(__dirname, 'logs', 'combined.log')
+      filename: path.join(__dirname, PATHS.LOGS_DIR, LOG_FILES.COMBINED)
     })
   ]
 });
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = envConfig.port;
 
 // Middleware to parse JSON bodies
 app.use(express.json());
@@ -78,11 +102,10 @@ app.get('/health', (req, res) => {
 // Public key endpoint - allows clients to fetch server's public key
 app.get('/public-key', (req, res) => {
   try {
-    const publicKeyPath = process.env.SERVER_PUBLIC_KEY_PATH ||
-      path.join(__dirname, 'keys', 'server_public.pem');
+    const publicKeyPath = envConfig.serverPublicKeyPath;
 
     if (!fs.existsSync(publicKeyPath)) {
-      return sendNotFound(res, 'Server public key not found. Generate keys first.');
+      return sendNotFound(res, ERROR_MESSAGES.PUBLIC_KEY_NOT_FOUND);
     }
 
     const publicKey = loadKey(publicKeyPath);
@@ -90,7 +113,7 @@ app.get('/public-key', (req, res) => {
     sendSuccess(res, { publicKey });
   } catch (error) {
     logger.error('Error fetching public key', { error: error.message });
-    sendInternalError(res, 'Failed to retrieve public key');
+    sendInternalError(res, ERROR_MESSAGES.FAILED_TO_RETRIEVE_PUBLIC_KEY);
   }
 });
 
@@ -98,10 +121,10 @@ app.get('/public-key', (req, res) => {
 app.post('/admin/reload-keys', authenticateWebhook, (req, res) => {
   try {
     reloadAuthorizedKeys();
-    sendSuccess(res, { message: 'Authorized keys reloaded successfully' });
+    sendSuccess(res, { message: SUCCESS_MESSAGES.KEYS_RELOADED });
   } catch (error) {
     logger.error('Error reloading keys', { error: error.message });
-    sendInternalError(res, 'Failed to reload keys');
+    sendInternalError(res, ERROR_MESSAGES.FAILED_TO_RELOAD_KEYS);
   }
 });
 
@@ -112,7 +135,7 @@ app.get('/jobs', authenticateWebhook, (req, res) => {
     const project = getClientProject(clientKey);
 
     if (!project) {
-      return sendForbidden(res, 'No project assigned to this client');
+      return sendForbidden(res, ERROR_MESSAGES.NO_PROJECT_ASSIGNED);
     }
 
     const jobs = getProjectJobs(project);
@@ -120,7 +143,7 @@ app.get('/jobs', authenticateWebhook, (req, res) => {
     sendSuccess(res, { project, jobs });
   } catch (error) {
     logger.error('Error listing jobs', { error: error.message });
-    sendInternalError(res, 'Failed to list jobs');
+    sendInternalError(res, ERROR_MESSAGES.FAILED_TO_LIST_JOBS);
   }
 });
 
@@ -136,7 +159,7 @@ app.post('/webhook',
     const jobName = req.jobName;      // from validateJobAccess
 
     logger.info('Webhook received - executing job', {
-      clientKey: clientKey.substring(0, 50) + '...',
+      clientKey: sanitizeClientKey(clientKey),
       project,
       jobName
     });
@@ -146,7 +169,7 @@ app.post('/webhook',
       logger.info('Starting job execution', { project, job: jobName });
 
       // Send immediate response to client
-      sendAccepted(res, 'Job started', {
+      sendAccepted(res, SUCCESS_MESSAGES.JOB_STARTED, {
         project,
         job: jobName
       });
@@ -154,7 +177,7 @@ app.post('/webhook',
       // Execute job asynchronously
       const result = await executeJob(project, jobName, {
         env: {
-          WEBHOOK_CLIENT: clientKey.substring(0, 50),
+          WEBHOOK_CLIENT: sanitizeClientKey(clientKey),
           WEBHOOK_TIMESTAMP: new Date().toISOString(),
           ...(req.body.env || {})
         },
@@ -190,11 +213,11 @@ app.use((err, req, res, next) => {
     path: req.path
   });
 
-  sendInternalError(res, 'Internal server error');
+  sendInternalError(res, ERROR_MESSAGES.INTERNAL_ERROR);
 });
 
 // Start server
 app.listen(PORT, () => {
   logger.info(`Webhook server started on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`Environment: ${envConfig.nodeEnv}`);
 });

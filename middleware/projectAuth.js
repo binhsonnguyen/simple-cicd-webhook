@@ -1,6 +1,7 @@
 const { getClientProject, getProjectJobs, jobExists } = require('../utils/projectManager');
 const { getBodyOrQuery } = require('../utils/requestHelpers');
 const { sendForbidden, sendBadRequest, sendNotFound } = require('../utils/responseHelpers');
+const { ERROR_MESSAGES, ERROR_HINTS } = require('../constants');
 
 /**
  * Middleware to validate client's project access
@@ -22,21 +23,21 @@ function validateProjectAccess(req, res, next) {
 
   // Validate project is assigned
   if (!assignedProject) {
-    return sendForbidden(res, 'No project assigned to this client', {
-      hint: 'Contact administrator to assign this client to a project'
+    return sendForbidden(res, ERROR_MESSAGES.NO_PROJECT_ASSIGNED, {
+      hint: ERROR_HINTS.CONTACT_ADMIN_PROJECT
     });
   }
 
   // Validate project parameter is provided
   if (!requestedProject) {
-    return sendBadRequest(res, 'No project specified', {
-      hint: 'Include "project" parameter in request body or query string'
+    return sendBadRequest(res, ERROR_MESSAGES.NO_PROJECT_SPECIFIED, {
+      hint: ERROR_HINTS.INCLUDE_PROJECT
     });
   }
 
   // Validate client is authorized for requested project
   if (requestedProject !== assignedProject) {
-    return sendForbidden(res, `Not authorized for project: ${requestedProject}`, {
+    return sendForbidden(res, `${ERROR_MESSAGES.PROJECT_UNAUTHORIZED}: ${requestedProject}`, {
       assignedProject: assignedProject
     });
   }
@@ -62,14 +63,14 @@ function validateJobAccess(req, res, next) {
 
   // Validate job name is provided
   if (!jobName) {
-    return sendBadRequest(res, 'No job specified', {
-      hint: 'Include "job" parameter in request body or query string'
+    return sendBadRequest(res, ERROR_MESSAGES.NO_JOB_SPECIFIED, {
+      hint: ERROR_HINTS.INCLUDE_JOB
     });
   }
 
   // Validate job exists
   if (!jobExists(project, jobName)) {
-    return sendNotFound(res, `Job not found: ${jobName}`, {
+    return sendNotFound(res, `${ERROR_MESSAGES.JOB_NOT_FOUND}: ${jobName}`, {
       project: project,
       availableJobs: getProjectJobs(project)
     });

@@ -32,7 +32,10 @@ jest.mock('../../utils/projectManager', () => ({
       'project-b': ['deploy', 'rollback']
     };
     return (jobsMap[project] || []).includes(job);
-  }),
+  })
+}));
+
+jest.mock('../../utils/jobExecutor', () => ({
   executeJob: jest.fn((project, job, options) => {
     // Simulate successful job execution
     return Promise.resolve({
@@ -71,10 +74,30 @@ jest.mock('winston', () => ({
   }
 }));
 
+// Mock the new utility modules
+jest.mock('../../utils/security', () => ({
+  sanitizeClientKey: jest.fn((key) => key ? key.substring(0, 50) + '...' : ''),
+  sanitizeToken: jest.fn((token) => token ? token.substring(0, 20) + '...' : '')
+}));
+
+jest.mock('../../utils/envValidator', () => ({
+  validateEnvironment: jest.fn(() => ({
+    valid: true,
+    warnings: [],
+    config: {
+      port: 3000,
+      nodeEnv: 'test',
+      serverPublicKeyPath: '/mock/path/server_public.pem',
+      serverPrivateKeyPath: '/mock/path/server_private.pem',
+      authorizedKeysPath: '/mock/path/authorized_keys.txt'
+    }
+  }))
+}));
+
 // Now require the middleware and app components
 const { authenticateWebhook } = require('../../middleware/auth');
 const { validateProjectAccess, validateJobAccess } = require('../../middleware/projectAuth');
-const { executeJob } = require('../../utils/projectManager');
+const { executeJob } = require('../../utils/jobExecutor');
 
 // Create test app
 function createTestApp() {
