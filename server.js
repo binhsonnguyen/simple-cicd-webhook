@@ -5,6 +5,13 @@ const path = require('path');
 const fs = require('fs');
 const { authenticateWebhook, reloadAuthorizedKeys } = require('./middleware/auth');
 const { loadKey } = require('./utils/keyManager');
+const {
+  getAvailableJobs,
+  getAllowedJobs,
+  isJobAllowed,
+  executeJob,
+  loadJobPermissions
+} = require('./utils/jobManager');
 
 // Configure Winston logger
 const logger = winston.createLogger({
@@ -107,21 +114,100 @@ app.post('/admin/reload-keys', authenticateWebhook, (req, res) => {
   }
 });
 
+// List available jobs for authenticated client
+app.get('/jobs', authenticateWebhook, (req, res) => {
+  try {
+    const clientKey = req.clientKey;
+    const availableJobs = getAvailableJobs();
+    const allowedJobs = getAllowedJobs(clientKey);
+
+    res.json({
+      status: 'ok',
+      availableJobs,
+      allowedJobs,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error listing jobs', { error: error.message });
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to list jobs'
+    });
+  }
+});
+
 // Webhook endpoint - protected with authentication
-app.post('/webhook', authenticateWebhook, (req, res) => {
+app.post('/webhook', authenticateWebhook, async (req, res) => {
+  const clientKey = req.clientKey;
+  const jobName = req.body.job || req.query.job;
+
   logger.info('Webhook received and authenticated', {
-    body: req.body,
-    headers: req.headers
+    clientKey: clientKey.substring(0, 50) + '...',
+    jobName,
+    body: req.body
   });
 
-  // TODO: Implement CI/CD job execution logic here
-  // For now, just acknowledge receipt
+  // Validate job name is provided
+  if (!jobName) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'No job specified',
+      hint: 'Include "job" parameter in request body or query string'
+    });
+  }
 
-  res.json({
-    status: 'received',
-    message: 'Webhook processed successfully',
-    timestamp: new Date().toISOString()
-  });
+  // Check if client is allowed to run this job
+  if (!isJobAllowed(clientKey, jobName)) {
+    logger.warn('Unauthorized job execution attempt', {
+      clientKey: clientKey.substring(0, 50) + '...',
+      jobName
+    });
+
+    return res.status(403).json({
+      status: 'error',
+      message: `Not authorized to run job: ${jobName}`,
+      allowedJobs: getAllowedJobs(clientKey)
+    });
+  }
+
+  // Execute the job
+  try {
+    logger.info('Starting job execution', { jobName });
+
+    // Send immediate response to client
+    res.json({
+      status: 'accepted',
+      message: 'Job started',
+      jobName,
+      timestamp: new Date().toISOString()
+    });
+
+    // Execute job asynchronously
+    const result = await executeJob(jobName, {
+      env: {
+        WEBHOOK_CLIENT: clientKey.substring(0, 50),
+        WEBHOOK_TIMESTAMP: new Date().toISOString(),
+        ...(req.body.env || {})
+      },
+      onOutput: (stream, data) => {
+        logger.info(`Job output [${jobName}]`, { stream, data: data.trim() });
+      }
+    });
+
+    logger.info('Job completed successfully', {
+      jobName,
+      exitCode: result.exitCode,
+      duration: result.duration
+    });
+
+  } catch (error) {
+    logger.error('Job execution failed', {
+      jobName,
+      error: error.message,
+      exitCode: error.exitCode,
+      stderr: error.stderr
+    });
+  }
 });
 
 // Error handling middleware

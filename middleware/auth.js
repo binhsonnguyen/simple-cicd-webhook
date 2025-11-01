@@ -54,7 +54,8 @@ function authenticateWebhook(req, res, next) {
     });
   }
 
-  // Token is valid, proceed
+  // Token is valid, attach client key to request for later use
+  req.clientKey = token;
   next();
 }
 

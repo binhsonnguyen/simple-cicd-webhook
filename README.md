@@ -40,7 +40,17 @@ node scripts/addAuthorizedKey.js "-----BEGIN PUBLIC KEY-----..." "My Client"
 - Copy `.env.example` to `.env`
 - Update paths if needed (defaults should work)
 
-### 6. Start the server
+### 6. Configure job permissions
+Assign jobs to clients:
+```bash
+# List available jobs
+node scripts/manageJobPermissions.js list-jobs
+
+# Grant client permission to run specific jobs
+node scripts/manageJobPermissions.js add ./keys/client1_public.pem "deploy-staging,run-tests" "GitLab CI Staging"
+```
+
+### 7. Start the server
 ```bash
 npm start
 ```
@@ -75,27 +85,140 @@ curl -X POST http://localhost:3000/webhook \
   -H "X-Webhook-Token: YOUR_PUBLIC_KEY"
 ```
 
+## Jobs
+
+Jobs are shell scripts stored in the `jobs/` directory. Each client can only execute jobs they're authorized for.
+
+### Creating Jobs
+
+Create a new job by adding a `.sh` file to the `jobs/` directory:
+
+```bash
+#!/bin/bash
+# Job: my-job
+# Description: Description of what this job does
+
+echo "Running my job..."
+# Your CI/CD commands here
+exit 0
+```
+
+Make it executable:
+```bash
+chmod +x jobs/my-job.sh
+```
+
+### Managing Job Permissions
+
+Use the job permissions management tool:
+
+```bash
+# List all available jobs
+node scripts/manageJobPermissions.js list-jobs
+
+# List configured clients and their permissions
+node scripts/manageJobPermissions.js list-clients
+
+# Grant permissions to a client
+node scripts/manageJobPermissions.js add ./keys/client_public.pem "job1,job2" "Client Description"
+
+# Remove client permissions
+node scripts/manageJobPermissions.js remove ./keys/client_public.pem
+```
+
+### Built-in Jobs
+
+The server includes these sample jobs:
+
+- **deploy-staging** - Deploy application to staging environment
+- **deploy-production** - Deploy application to production environment
+- **run-tests** - Run automated test suite
+- **rebuild-cache** - Clear and rebuild application cache
+
+### Running Jobs via Webhook
+
+Specify the job name in your webhook request:
+
+**Via query parameter:**
+```bash
+curl -X POST "http://localhost:3000/webhook?job=deploy-staging" \
+  -H "X-Webhook-Token: YOUR_PUBLIC_KEY"
+```
+
+**Via request body:**
+```bash
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Token: YOUR_PUBLIC_KEY" \
+  -d '{"job": "deploy-staging"}'
+```
+
+### Listing Available Jobs
+
+Check which jobs you can run:
+```bash
+curl http://localhost:3000/jobs \
+  -H "X-Webhook-Token: YOUR_PUBLIC_KEY"
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "availableJobs": ["deploy-staging", "deploy-production", "run-tests", "rebuild-cache"],
+  "allowedJobs": ["deploy-staging", "run-tests"]
+}
+```
+
 ## Endpoints
 
 - `GET /health` - Health check endpoint (no auth required)
 - `GET /public-key` - Fetch server's public key (no auth required)
-- `POST /webhook` - Main webhook endpoint (requires authentication)
+- `GET /jobs` - List available and allowed jobs (requires authentication)
+- `POST /webhook` - Execute a CI/CD job (requires authentication)
 - `POST /admin/reload-keys` - Reload authorized keys without restart (requires authentication)
 
 ## GitLab CI Integration
 
-In your `.gitlab-ci.yml`, use the client public key to authenticate:
+In your `.gitlab-ci.yml`, trigger specific jobs via webhook:
 
 ```yaml
-trigger-webhook:
+deploy-staging:
   stage: deploy
   script:
-    - 'curl -X POST "${WEBHOOK_URL}/webhook" -H "X-Webhook-Token: ${WEBHOOK_TOKEN}"'
+    - |
+      curl -X POST "${WEBHOOK_URL}/webhook" \
+        -H "Content-Type: application/json" \
+        -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
+        -d '{"job": "deploy-staging"}'
+  only:
+    - develop
+
+deploy-production:
+  stage: deploy
+  script:
+    - |
+      curl -X POST "${WEBHOOK_URL}/webhook" \
+        -H "Content-Type: application/json" \
+        -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
+        -d '{"job": "deploy-production"}'
   only:
     - main
+  when: manual
+
+run-tests:
+  stage: test
+  script:
+    - |
+      curl -X POST "${WEBHOOK_URL}/webhook" \
+        -H "Content-Type: application/json" \
+        -H "X-Webhook-Token: ${WEBHOOK_TOKEN}" \
+        -d '{"job": "run-tests"}'
 ```
 
-Set `WEBHOOK_TOKEN` as a GitLab CI/CD variable with your client's public key.
+**GitLab CI/CD Variables to set:**
+- `WEBHOOK_URL` - Your webhook server URL (e.g., `https://your-server.com`)
+- `WEBHOOK_TOKEN` - Your client's public key (mark as protected and masked)
 
 ## Logging
 
@@ -111,6 +234,9 @@ All requests are logged to:
 - Use environment variables for sensitive configuration
 - The `keys/` directory is gitignored by default
 - Private keys are created with restricted permissions (600)
+- **Job permissions** are enforced - clients can only run jobs they're authorized for
+- Job scripts are validated to prevent directory traversal attacks
+- All job execution is logged with client identification
 
 ## Environment Variables
 
