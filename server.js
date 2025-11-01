@@ -2,6 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const winston = require('winston');
 const path = require('path');
+const fs = require('fs');
+const { authenticateWebhook, reloadAuthorizedKeys } = require('./middleware/auth');
+const { loadKey } = require('./utils/keyManager');
 
 // Configure Winston logger
 const logger = winston.createLogger({
@@ -57,12 +60,62 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Webhook endpoint - placeholder for now
-app.post('/webhook', (req, res) => {
-  logger.info('Webhook received', {
+// Public key endpoint - allows clients to fetch server's public key
+app.get('/public-key', (req, res) => {
+  try {
+    const publicKeyPath = process.env.SERVER_PUBLIC_KEY_PATH ||
+      path.join(__dirname, 'keys', 'server_public.pem');
+
+    if (!fs.existsSync(publicKeyPath)) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Server public key not found. Generate keys first.'
+      });
+    }
+
+    const publicKey = loadKey(publicKeyPath);
+
+    res.json({
+      status: 'ok',
+      publicKey: publicKey,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error fetching public key', { error: error.message });
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to retrieve public key'
+    });
+  }
+});
+
+// Admin endpoint to reload authorized keys (requires authentication)
+app.post('/admin/reload-keys', authenticateWebhook, (req, res) => {
+  try {
+    reloadAuthorizedKeys();
+    res.json({
+      status: 'ok',
+      message: 'Authorized keys reloaded successfully',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error reloading keys', { error: error.message });
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to reload keys'
+    });
+  }
+});
+
+// Webhook endpoint - protected with authentication
+app.post('/webhook', authenticateWebhook, (req, res) => {
+  logger.info('Webhook received and authenticated', {
     body: req.body,
     headers: req.headers
   });
+
+  // TODO: Implement CI/CD job execution logic here
+  // For now, just acknowledge receipt
 
   res.json({
     status: 'received',

@@ -8,6 +8,11 @@ node_modules/
 logs/
 *.log
 
+# Keys (IMPORTANT: Never commit private keys!)
+keys/
+*.pem
+*.key
+
 # OS files
 .DS_Store
 Thumbs.db
