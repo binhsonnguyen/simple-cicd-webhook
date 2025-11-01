@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "generate-keys": "node scripts/generateKeys.js",
     "add-key": "node scripts/addAuthorizedKey.js",
     "test-webhook": "node scripts/testWebhook.js",
@@ -20,5 +22,9 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "winston": "^3.18.3"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0",
+    "supertest": "^7.1.4"
   }
 }
