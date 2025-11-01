@@ -34,3 +34,6 @@ build/
 
 # Jobs
 jobs/
+
+# Test reports
+coverage/
